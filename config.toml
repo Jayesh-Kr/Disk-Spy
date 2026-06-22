@@ -1,0 +1,62 @@
+[general]
+# DiskSpy configuration
+# Edit this file and restart diskspy.exe for changes to take effect
+
+dashboard_port = 7272
+
+# Minimum size change to log (bytes). Events smaller than this are silently dropped.
+min_delta_bytes = 51200
+
+# How long (seconds) to wait after the last write to a file before committing to DB
+debounce_seconds = 2
+
+# How many days of history to keep in the database (older rows are deleted on startup)
+retention_days = 90
+
+[watch]
+# Drives to monitor. Use forward slashes or double backslashes.
+# Comment out drives you don't want to track.
+drives = ["C:\\"]
+
+# Paths to EXCLUDE (prefix match, case-insensitive)
+exclude_paths = [
+    "C:\\Windows\\",
+    "C:\\$Recycle.Bin\\",
+    "C:\\pagefile.sys",
+    "C:\\hiberfil.sys",
+    "C:\\swapfile.sys",
+    "C:\\ProgramData\\Microsoft\\Windows Defender\\",
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\Temp\\",
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\Microsoft\\Windows\\INetCache\\",
+    "C:\\Users\\%USERNAME%\\AppData\\Local\\Microsoft\\Windows\\Explorer\\",
+]
+
+# Processes to EXCLUDE (exact process name match, case-insensitive)
+exclude_processes = [
+    "MsMpEng.exe",
+    "SearchIndexer.exe",
+    "svchost.exe",
+    "System",
+    "Registry",
+    "MemCompression",
+    "WmiPrvSE.exe",
+    "RuntimeBroker.exe",
+    "taskhostw.exe",
+]
+
+[labels]
+"docker.exe" = "Docker Desktop"
+"com.docker.backend.exe" = "Docker Backend"
+"node.exe" = "Node.js / npm"
+"npm.cmd" = "npm"
+"python.exe" = "Python"
+"python3.exe" = "Python"
+"pip.exe" = "pip"
+"cargo.exe" = "Cargo (Rust)"
+"git.exe" = "Git"
+"Code.exe" = "VS Code"
+"Cursor.exe" = "Cursor IDE"
+"claude.exe" = "Claude Desktop"
+"ollama.exe" = "Ollama"
+"wsl.exe" = "WSL"
+"vmmem" = "WSL2 / Hyper-V VM"

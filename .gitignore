@@ -1,0 +1,32 @@
+# Rust build artifacts
+/target/
+/target
+**/*.rs.bk
+**/*.pdb
+**/*.d
+
+# Cargo
+/.cargo/
+/Cargo.lock.bak
+
+# IDE
+.vscode/
+.idea/
+*.iml
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Runtime artifacts (created when diskspy runs)
+/diskspy.db
+/diskspy.db-journal
+/diskspy.db-wal
+/diskspy.db-shm
+/config.toml.local
+
+# Build logs (transient)
+/build.log
+/test.log
+/relbuild.log

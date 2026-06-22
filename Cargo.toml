@@ -1,0 +1,61 @@
+[package]
+name = "diskspy"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync", "signal"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Database
+rusqlite = { version = "0.31", features = ["bundled"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# Async helpers
+dashmap = "5"
+parking_lot = "0.12"
+
+# Errors
+thiserror = "1"
+anyhow = "1"
+
+# Config
+toml = "0.8"
+
+# ETW — Windows kernel event tracing. Using 1.x (current major); API differs
+# slightly from the spec's "0.5", but the FileIo kernel-flag API is stable.
+ferrisetw = "1.2"
+
+# HTTP server
+axum = "0.7"
+tower = "0.4"
+tower-http = { version = "0.5", features = ["cors"] }
+
+# Windows API (PID resolution) — only used on Windows targets
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_System_Threading",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_SystemInformation",
+    "Win32_System_WindowsProgramming",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+
