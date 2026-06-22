@@ -176,8 +176,30 @@ fn default_exclude_processes() -> Vec<String> {
 }
 
 pub fn default_config_path() -> PathBuf {
-    // CWD/config.toml — simplest, matches what the spec asks for.
-    PathBuf::from("config.toml")
+    app_data_dir().join("config.toml")
+}
+
+/// Returns `%LOCALAPPDATA%\DiskSpy`, creating the directory if it does not
+/// exist. This is the canonical home for all DiskSpy state on disk
+/// (database, config, log) so the location is stable regardless of which
+/// directory the binary was launched from.
+pub fn app_data_dir() -> PathBuf {
+    let base = std::env::var_os("LOCALAPPDATA")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let dir = base.join("DiskSpy");
+    let _ = std::fs::create_dir_all(&dir);
+    dir
+}
+
+/// Returns the path where `diskspy.db` should live.
+pub fn default_db_path() -> PathBuf {
+    app_data_dir().join("diskspy.db")
+}
+
+/// Returns the path where `diskspy.log` (the rolling log file) should live.
+pub fn default_log_path() -> PathBuf {
+    app_data_dir().join("diskspy.log")
 }
 
 #[cfg(test)]

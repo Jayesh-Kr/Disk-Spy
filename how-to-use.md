@@ -21,17 +21,39 @@ from the first launch to configuring filters and inspecting the database.
 ## 1. First launch
 
 You need Administrator privileges to use DiskSpy, because the Windows
-kernel's ETW tracing API requires them. There are two ways to get them.
+kernel's ETW tracing API requires them. There are two ways to get them,
+and **two modes** the binary can run in.
 
-### Option A: double-click from Explorer
+### Modes
+
+- **Console mode** (default): a black console window stays open showing
+  live log output. Use this for development, debugging, or the first
+  launch when you want to see what is happening.
+- **Background / tray mode** (`--background` or `--tray`): the console
+  window hides itself, all logs go to a rolling file, and a blue tray
+  icon appears in the notification area. Use this for day-to-day use.
+
+### Option A: background / tray mode (recommended)
+
+After a one-time elevated launch, this is the mode you will use every
+day.
 
 1. Open File Explorer.
 2. Navigate to `D:\Disk Spy\target\release`.
 3. Double-click `diskspy.exe`.
-4. Windows will show a User Account Control (UAC) dialog. Click "Yes".
-5. A console window will appear and stay open. Leave it open.
+4. Windows shows a UAC dialog. Click "Yes".
+5. The console window briefly flashes and then disappears.
+6. A blue tray icon appears in the notification area (you may need to
+   expand the hidden icons arrow).
 
-### Option B: from an elevated PowerShell
+Right-click the tray icon for:
+
+- Open Dashboard (in your browser)
+- Show Log File (in your default text handler)
+- Open Data Folder (in Explorer)
+- Quit DiskSpy
+
+### Option B: console mode
 
 1. Press the Windows key, type "PowerShell", right-click "Windows
    PowerShell", and choose "Run as administrator".
@@ -40,6 +62,31 @@ kernel's ETW tracing API requires them. There are two ways to get them.
    cd "D:\Disk Spy"
    .\target\release\diskspy.exe
    ```
+
+A console window appears and stays open. Press Ctrl+C to stop.
+
+### What gets created on first launch
+
+DiskSpy creates three files inside `%LOCALAPPDATA%\DiskSpy\`:
+
+- `config.toml` - your editable configuration.
+- `diskspy.db` - the SQLite database.
+- `diskspy.log.YYYY-MM-DD` - the rolling log file (one per day).
+
+The exact paths are printed at startup and returned by `/api/status`.
+
+### Where is `%LOCALAPPDATA%`?
+
+On a default Windows install, this is `C:\Users\<your-username>\AppData\Local\DiskSpy\`.
+The `AppData` folder is hidden by default. The fastest way to open it:
+
+1. Press Win+R, type `%LOCALAPPDATA%\DiskSpy`, press Enter.
+
+Or in PowerShell:
+
+```powershell
+explorer "$env:LOCALAPPDATA\DiskSpy"
+```
 
 Either way, the console window will print a few lines of startup
 information and then stay open. Do not close it.
@@ -294,17 +341,29 @@ transactions.
 
 ## 6. Stopping DiskSpy
 
-Click in the console window and press `Ctrl+C`. DiskSpy will:
+### From the tray menu (background mode)
+
+Right-click the tray icon and choose **Quit DiskSpy**. DiskSpy will:
 
 1. Stop accepting new events from the kernel.
 2. Flush any pending debouncer aggregations to the database.
 3. Close the database connection.
 4. Stop the HTTP server.
-5. Print "DiskSpy stopped." and exit.
+5. Print `DiskSpy stopped.` to the log file and exit.
 
-This usually takes well under a second. If you close the console
-window with the X button instead, Windows terminates the process
-abruptly and any unflushed debouncer entries are lost.
+This usually takes well under a second.
+
+### From the console (console mode)
+
+Click in the console window and press `Ctrl+C`. Same flush sequence as
+above.
+
+### Force-stop
+
+If DiskSpy stops responding, you can force-kill it from Task Manager.
+Any unflushed debouncer entries (typically zero if you wait more than
+`debounce_seconds`) are lost, but the database itself remains
+consistent.
 
 ---
 

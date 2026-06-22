@@ -3,6 +3,8 @@ extern crate parking_lot;
 
 #[cfg(windows)]
 pub mod etw;
+#[cfg(windows)]
+pub mod tray;
 pub mod config;
 pub mod db;
 pub mod debouncer;
@@ -110,23 +112,42 @@ use tracing_subscriber::EnvFilter;
 #[cfg(windows)]
 use crate::etw::{elevation_error_message, is_elevated, refresh_dos_devices};
 
-use crate::config::{default_config_path, Config};
+use crate::config::{default_config_path, default_db_path, default_log_path, Config};
 use crate::db::Database;
 use crate::debouncer::{run_debouncer, Debouncer};
 use crate::process_cache::ProcessCache;
 use crate::server::{serve, AppState};
+// Tray imports are used inside the `if headless` block below; the explicit
+// use here keeps them out of the unused-imports lint's reach.
+use crate::tray::TrayMessage;
+
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 1. Tracing init
+    // 1. Tracing init. We always write to a rolling log file under
+    //    %LOCALAPPDATA%\DiskSpy\diskspy.log, and also mirror to stderr
+    //    when stderr is a tty (i.e. console-mode launch).
+    let log_path = default_log_path();
+    let log_dir = log_path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+    let file_appender = tracing_appender::rolling::daily(log_dir, "diskspy.log");
+    let (file_writer, _guard) = tracing_appender::non_blocking(file_appender);
+
+    use tracing_subscriber::fmt::writer::MakeWriterExt;
+    let stderr_writer = std::io::stderr.with_max_level(tracing::Level::INFO);
+    let combined = file_writer.and(stderr_writer);
+
     tracing_subscriber::fmt()
         .with_env_filter(
             EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,diskspy=info")),
         )
         .with_target(false)
+        .with_writer(combined)
         .init();
 
     info!("DiskSpy v0.1.0 starting…");
+    info!(log_file = %log_path.display(), "logging to file");
+    info!(db_file = %default_db_path().display(), "database location");
+    info!(cfg_file = %default_config_path().display(), "config location");
 
     // 2. Elevation check (Windows only). ETW kernel tracing needs it.
     #[cfg(windows)]
@@ -146,7 +167,8 @@ async fn main() -> Result<()> {
     log_config(&config);
 
     // 4. Database
-    let db_path = PathBuf::from("diskspy.db");
+    let db_path = default_db_path();
+    info!(database = %db_path.display(), "opening database");
     let db = Arc::new(Database::open(&db_path)?);
     let deleted = db.delete_older_than(config.general.retention_days)?;
     if deleted > 0 {
@@ -206,17 +228,67 @@ async fn main() -> Result<()> {
         db_path: db_path.clone(),
     };
 
-    // 11. Ctrl+C handler — flush debouncer, close DB.
     let shutdown_for_signal = shutdown_tx.clone();
+    let port = config.general.dashboard_port;
     let server_handle = tokio::spawn(async move {
-        if let Err(e) = serve(app_state, config.general.dashboard_port).await {
+        if let Err(e) = serve(app_state, port).await {
             warn!(?e, "server stopped");
         }
         let _ = shutdown_for_signal.send(true);
     });
 
-    tokio::signal::ctrl_c().await.ok();
-    info!("Ctrl+C received — flushing…");
+    // 11. Background / tray mode. CLI flags:
+    //      --background / --tray : hide the console window and install a tray icon.
+    //      --no-tray             : run in the foreground (default; keep console visible).
+    //
+    //    In tray mode, the user quits via the tray menu instead of Ctrl+C.
+    let args: Vec<String> = std::env::args().collect();
+    let headless = args.iter().any(|a| a == "--background" || a == "--tray");
+
+    if headless {
+        crate::tray::hide_console();
+        info!("running in headless / tray mode");
+        if let Some(tray_rx) = crate::tray::spawn_tray().ok().flatten() {
+            // Spawn a tiny task that bridges the tray channel into our
+            // shutdown watch.
+            let shutdown_tx_for_tray = shutdown_tx.clone();
+            tokio::spawn(async move {
+                let mut rx = tray_rx;
+                while let Some(msg) = rx.recv().await {
+                    match msg {
+                        TrayMessage::OpenDashboard => {
+                            let url = format!(
+                                "http://localhost:{}",
+                                config.general.dashboard_port
+                            );
+                            let _ = crate::tray::open_in_default_app(std::path::Path::new(&url));
+                        }
+                        TrayMessage::ShowLogFile => {
+                            let _ = crate::tray::open_in_default_app(&log_path);
+                        }
+                        TrayMessage::OpenDataFolder => {
+                            let dir = crate::config::app_data_dir();
+                            let _ = crate::tray::open_in_default_app(&dir);
+                        }
+                        TrayMessage::Quit => {
+                            let _ = shutdown_tx_for_tray.send(true);
+                            break;
+                        }
+                    }
+                }
+            });
+        } else {
+            warn!("tray icon unavailable; running headless without it");
+        }
+        // Wait for shutdown signal (from tray menu or external Ctrl+C).
+        let mut shutdown_wait_rx = shutdown_rx.clone();
+        let _ = shutdown_wait_rx.changed().await;
+        info!("shutdown signal received — flushing…");
+    } else {
+        info!("running in console mode (use --background to hide this window)");
+        tokio::signal::ctrl_c().await.ok();
+        info!("Ctrl+C received — flushing…");
+    }
 
     // Trigger graceful shutdown.
     let _ = shutdown_tx.send(true);

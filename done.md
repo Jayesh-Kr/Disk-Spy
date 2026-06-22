@@ -258,4 +258,86 @@ These are inherent to the design and not specific to this laptop:
 
 ---
 
+## 8. Headless mode and stable data location (follow-up)
+
+After the initial release, two usability issues were addressed.
+
+### 8.1 Problem
+
+1. **The console window stays visible.** The default behavior is to print
+   logs to a console that the user has to leave open. This is unfriendly
+   for a "set-and-forget" tool.
+2. **The database lives wherever the binary was launched from.** Running
+   `diskspy.exe` from `D:\Disk Spy` puts `diskspy.db` in `D:\Disk Spy`.
+   Running it from a Task Scheduler action puts it somewhere else.
+
+### 8.2 Solution
+
+**Stable data location.** All runtime state is now under
+`%LOCALAPPDATA%\DiskSpy\`:
+- `config.toml`
+- `diskspy.db`
+- `diskspy.log.YYYY-MM-DD` (rolling, one file per day)
+
+The directory is created on first run. The exact paths are logged at
+startup and exposed via the API.
+
+**Headless / tray mode.** A new `tray-icon`-backed system-tray menu is
+available via the `--background` (or `--tray`) CLI flag. In this mode:
+
+- The console window is hidden via `ShowWindow(hwnd, SW_HIDE)`.
+- Logs are mirrored to the rolling file under `%LOCALAPPDATA%`.
+- A tray icon appears in the notification area with the menu:
+  - **Open Dashboard** - opens `http://localhost:7272` in the default
+    browser.
+  - **Show Log File** - opens the current `diskspy.log` in the default
+    text handler.
+  - **Open Data Folder** - opens `%LOCALAPPDATA%\DiskSpy\` in Explorer.
+  - **Quit DiskSpy** - signals graceful shutdown.
+
+Default mode (no flag) is unchanged: console visible, Ctrl+C quits.
+
+### 8.3 Code added
+
+- `src/tray.rs` - 200+ lines. `spawn_tray()`, `TrayMessage`,
+  `hide_console()`, `open_in_default_app()`. Uses `tray-icon 0.19`.
+- `src/main.rs` - rewired to choose between console and headless mode
+  based on CLI args, with the tray channel bridged into the shutdown
+  watch.
+- `src/config.rs` - new `app_data_dir()`, `default_db_path()`,
+  `default_log_path()` helpers.
+
+### 8.4 New dependency
+
+- `tray-icon = "0.19"` (Windows-only target dep).
+- `tracing-appender = "0.2"` for the rolling file logger.
+
+Release binary grew from 4.4 MB to 4.8 MB.
+
+### 8.5 Smoke test (no admin)
+
+```
+$ target\release\diskspy.exe --background
+$ ls $env:LOCALAPPDATA\DiskSpy\
+    config.toml            706 B
+    diskspy.db          32 KB
+    diskspy.log.YYYY-MM-DD  3 KB
+$ cat $env:LOCALAPPDATA\DiskSpy\diskspy.log
+    INFO DiskSpy v0.1.0 starting...
+    INFO logging to file log_file=...diskspy.log
+    INFO database location db_file=...diskspy.db
+    INFO config location cfg_file=...config.toml
+    INFO Configuration loaded port=7272 ...
+    INFO Dashboard available at http://localhost:7272
+    WARN ETW consumer stopped with error e=failed to start ETW kernel trace: EtwNativeError(AlreadyExist)
+    INFO running in headless / tray mode
+```
+
+The `AlreadyExist` warning is expected in a non-elevated sandbox: another
+diskspy is already attached to the `DiskSpy-KernelTrace` session, or the
+sandbox forbids the second attachment. In a real launch (elevated) the
+trace starts and the warning goes away.
+
+---
+
 *End of build log.*

@@ -29,8 +29,7 @@ anyhow = "1"
 # Config
 toml = "0.8"
 
-# ETW — Windows kernel event tracing. Using 1.x (current major); API differs
-# slightly from the spec's "0.5", but the FileIo kernel-flag API is stable.
+# ETW — Windows kernel event tracing
 ferrisetw = "1.2"
 
 # HTTP server
@@ -38,8 +37,14 @@ axum = "0.7"
 tower = "0.4"
 tower-http = { version = "0.5", features = ["cors"] }
 
-# Windows API (PID resolution) — only used on Windows targets
+# Rolling log file
+tracing-appender = "0.2"
+
 [target.'cfg(windows)'.dependencies]
+# System tray icon (used by --background mode)
+tray-icon = "0.19"
+
+# Windows API bindings
 windows = { version = "0.58", features = [
     "Win32_System_Diagnostics_ToolHelp",
     "Win32_System_Threading",
@@ -47,7 +52,10 @@ windows = { version = "0.58", features = [
     "Win32_Security",
     "Win32_Storage_FileSystem",
     "Win32_System_SystemInformation",
-    "Win32_System_WindowsProgramming",
+    "Win32_System_Console",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Shell",
+    "Win32_Graphics_Gdi",
 ] }
 
 [dev-dependencies]
@@ -58,4 +66,3 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
-

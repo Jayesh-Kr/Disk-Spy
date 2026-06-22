@@ -296,47 +296,72 @@ integration test that verifies the entire pipeline.
 
 ## 9. Running
 
-There are three ways to start DiskSpy.
+There are two launch modes. **Background / tray mode is the recommended
+one for normal use** - the console window hides itself and a tray icon
+gives you access to the dashboard, log file, data folder, and a Quit
+option.
 
-### From an elevated PowerShell (recommended for the first launch)
+### Background / tray mode (recommended)
+
+From an elevated PowerShell:
+
+```powershell
+cd "D:\Disk Spy"
+.\target\release\diskspy.exe --background
+```
+
+Or, since the UAC manifest is embedded, just double-click
+`target\release\diskspy.exe` in Explorer. Windows shows a UAC dialog;
+accept it, and DiskSpy starts in the background. A blue tray icon
+appears in the notification area.
+
+The tray menu:
+
+- **Open Dashboard** - opens `http://localhost:7272` in your default
+  browser.
+- **Show Log File** - opens the current log file in your default text
+  handler.
+- **Open Data Folder** - opens `%LOCALAPPDATA%\DiskSpy\` in Explorer.
+- **Quit DiskSpy** - signals a clean shutdown and exits.
+
+### Foreground / console mode (for development and debugging)
+
+From an elevated PowerShell:
 
 ```powershell
 cd "D:\Disk Spy"
 .\target\release\diskspy.exe
 ```
 
-The first launch will:
+A console window stays open showing live log output. Press `Ctrl+C` to
+stop.
 
-1. Print `DiskSpy v0.1.0 starting...` to the console.
-2. Detect it is running as Administrator (and exit with a clear error
-   if not).
-3. Create `config.toml` in the working directory if it does not exist
-   already.
-4. Open or create `diskspy.db` in the working directory.
-5. Apply the retention policy (delete rows older than
-   `retention_days`).
-6. Scan `A:` through `Z:` and build the volume device map.
-7. Start the ETW kernel trace session named `DiskSpy-KernelTrace`.
-8. Begin listening for HTTP on `dashboard_port` (default `7272`).
+### What happens on first launch (both modes)
 
-Open `http://localhost:7272` in any browser to see the dashboard.
+1. Print `DiskSpy v0.1.0 starting...` to console and to the log file.
+2. Detect it is running as Administrator (exit 1 with a clear error if
+   not).
+3. Create `%LOCALAPPDATA%\DiskSpy\` if it does not exist.
+4. Read or create `config.toml` inside that directory.
+5. Open or create `diskspy.db` inside that directory.
+6. Apply the retention policy.
+7. Scan `A:` through `Z:` and build the volume device map.
+8. Start the ETW kernel trace session named `DiskSpy-KernelTrace`.
+9. Begin listening for HTTP on `dashboard_port` (default `7272`).
+10. In background mode, hide the console and install the tray icon.
+11. In console mode, print the dashboard URL and wait for `Ctrl+C`.
 
-### From Explorer
+### Where is my data stored?
 
-Double-click `target\release\diskspy.exe`. Windows will show a UAC
-dialog. Click "Yes". DiskSpy runs elevated and behaves identically
-to the PowerShell launch.
+**Always under `%LOCALAPPDATA%\DiskSpy\`.** This is
+`C:\Users\<you>\AppData\Local\DiskSpy\` on a default Windows install.
+Inside that directory you will find:
 
-### From a non-elevated shell
+- `config.toml` - your editable configuration.
+- `diskspy.db` - the SQLite database.
+- `diskspy.log.YYYY-MM-DD` - the rolling log file (one per day).
 
-If the binary is launched without Administrator privileges, it prints:
-
-```
-ERROR: DiskSpy requires Administrator privileges to capture kernel ETW events.
-Right-click diskspy.exe -> Run as Administrator
-```
-
-and exits with code 1. This is by design.
+The exact paths are printed at startup and returned by `/api/status`.
 
 ### Stopping
 
