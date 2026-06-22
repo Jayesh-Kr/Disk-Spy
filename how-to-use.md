@@ -91,11 +91,14 @@ explorer "$env:LOCALAPPDATA\DiskSpy"
 Either way, the console window will print a few lines of startup
 information and then stay open. Do not close it.
 
-The first time you run DiskSpy, two files will be created in the
-working directory (the directory you launched from):
+On first launch, DiskSpy creates `%LOCALAPPDATA%\DiskSpy\` and three files
+inside it:
 
 - `config.toml` — your editable configuration.
 - `diskspy.db` — the SQLite database.
+- `diskspy.log.YYYY-MM-DD` — the rolling log file (one per day).
+
+No files are ever created in the directory you launched from.
 
 ---
 

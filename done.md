@@ -314,8 +314,6 @@ Default mode (no flag) is unchanged: console visible, Ctrl+C quits.
 
 Release binary grew from 4.4 MB to 4.8 MB.
 
-### 8.5 Smoke test (no admin)
-
 ```
 $ target\release\diskspy.exe --background
 $ ls $env:LOCALAPPDATA\DiskSpy\

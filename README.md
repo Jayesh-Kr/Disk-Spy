@@ -210,9 +210,9 @@ Disk Spy/
 |
 |-- target/                       Build output (gitignored)
 |   |-- debug/diskspy.exe
-|   |-- release/diskspy.exe       4.4 MB optimized + LTO + stripped
+|   |-- release/diskspy.exe       ~5 MB optimized + LTO + stripped
 |
-|-- diskspy.db                    Created at runtime in the working directory
+|-- (no runtime files in the project tree; everything goes to %LOCALAPPDATA%\DiskSpy\)
 ```
 
 Total source: roughly 1,700 lines of Rust.

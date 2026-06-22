@@ -18,10 +18,10 @@ use std::time::Duration;
 
 use anyhow::{anyhow, Result};
 use ferrisetw::parser::Parser;
-use ferrisetw::provider::kernel_providers::{FILE_IO_PROVIDER, FILE_INIT_IO_PROVIDER};
+use ferrisetw::provider::kernel_providers::FILE_IO_PROVIDER;
 use ferrisetw::provider::Provider;
 use ferrisetw::schema_locator::SchemaLocator;
-use ferrisetw::trace::KernelTrace;
+use ferrisetw::trace::{stop_trace_by_name, KernelTrace};
 use ferrisetw::EventRecord;
 use tokio::sync::mpsc;
 use tracing::{debug, info, warn};
@@ -55,21 +55,6 @@ fn build_fileio_provider(tx: mpsc::Sender<RawFileEvent>, dos_devices: Arc<parkin
         .build()
 }
 
-fn build_fileio_init_provider(
-    tx: mpsc::Sender<RawFileEvent>,
-    dos_devices: Arc<parking_lot::Mutex<HashMap<String, String>>>,
-) -> Provider {
-    let tx_clone = tx.clone();
-    let dos_clone = dos_devices.clone();
-
-    Provider::kernel(&FILE_INIT_IO_PROVIDER)
-        .any(0xFFFF_FFFF_FFFF_FFFF)
-        .add_callback(move |record: &EventRecord, locator: &SchemaLocator| {
-            handle_fileio_event(record, locator, &tx_clone, &dos_clone, "fileio_init");
-        })
-        .build()
-}
-
 fn handle_fileio_event(
     record: &EventRecord,
     locator: &SchemaLocator,
@@ -82,21 +67,20 @@ fn handle_fileio_event(
         // System pseudo-PID; ignore (e.g. kernel writes to NTFS metadata).
         return;
     }
+    let event_id = record.event_id();
     let opcode = record.opcode();
-    // OpCodes we care about:
-    //   0x00 = Info / generic FileIo
-    //   0x01 = Name (FileIo_Name)
-    //   0x20 = Create
-    //   0x21 = Cleanup
-    //   0x22 = Close
-    //   0x25 = Write
-    //   0x26 = SetInfo
-    //   0x27 = Delete
-    //   0x32 = DirEnum
-    let is_write = opcode == 0x25;
-    let is_close = opcode == 0x22;
-    let is_setinfo = opcode == 0x26;
-    let is_delete = opcode == 0x27;
+    // The kernel FileIo providers report the kernel MOF event ID in
+    // `event_id`, not the EventHeader.Opcode. Match on `event_id` instead.
+    //   10 = Read    (in MOF)
+    //   11 = Write   (in MOF)
+    //   12 = SetInfo (in MOF)
+    //   13 = Delete  (in MOF)
+    //   32 = Cleanup (in MOF)
+    //   33 = Close   (in MOF)
+    let is_write = event_id == 11;
+    let is_close = event_id == 33 || opcode == 0x22;
+    let is_setinfo = event_id == 12;
+    let is_delete = event_id == 13;
     if !(is_write || is_close || is_setinfo || is_delete) {
         return;
     }
@@ -118,15 +102,19 @@ fn handle_fileio_event(
         return;
     }
     let dos_path = nt_to_dos(&nt_path, dos_devices);
+    if !dos_path.starts_with("C:\\") {
+        return;
+    }
 
     // Compute delta:
     //   Write: +IoSize
     //   SetInfo (rename/truncate): treat as 0 unless we know better
     //   Delete: 0 (the file removal will be reflected in the next drive scan)
     //   Close: 0 (we just want a marker; debouncer will drop the entry below threshold)
-    let bytes = match opcode {
-        0x25 => io_size.unwrap_or(0) as i64, // Write
-        _ => 0,
+    let bytes = if event_id == 11 {
+        io_size.unwrap_or(0) as i64
+    } else {
+        0
     };
 
     let event = RawFileEvent {
@@ -199,22 +187,75 @@ pub fn refresh_dos_devices() -> HashMap<String, String> {
 
 /// Set up a kernel trace listening to FileIo events. Returns a `KernelTrace`
 /// which keeps the session alive while alive; dropping it stops the session.
+///
+/// The session name is `DiskSpy-KernelTrace` plus a per-process suffix so two
+/// concurrent runs cannot collide. If a previous run's session is somehow
+/// still attached under that exact name (zombie, partial cleanup), we stop it
+/// once via `stop_trace_by_name` and retry — this recovers from a hard kill
+/// of the previous process.
 pub fn start_trace(
     raw_tx: mpsc::Sender<RawFileEvent>,
     dos_devices: Arc<parking_lot::Mutex<HashMap<String, String>>>,
 ) -> Result<KernelTrace> {
-    let provider = build_fileio_provider(raw_tx.clone(), dos_devices.clone());
-    let init_provider = build_fileio_init_provider(raw_tx, dos_devices);
+    let name = unique_session_name();
+    match try_start(&name, raw_tx.clone(), dos_devices.clone()) {
+        Ok(t) => Ok(t),
+        Err(e) => {
+            // Only retry on the specific "session name is taken" error.
+            // Other errors (e.g. resource exhaustion) are real problems
+            // that no amount of retrying will solve.
+            let msg = format!("{:?}", e);
+            if !msg.contains("AlreadyExist") {
+                return Err(e);
+            }
+            warn!(session = %name, "ETW session name is taken; stopping the stale session and retrying");
+            let _ = stop_trace_by_name(&name);
+            std::thread::sleep(Duration::from_millis(500));
+            try_start(&name, raw_tx, dos_devices)
+        }
+    }
+}
+
+fn try_start(
+    name: &str,
+    raw_tx: mpsc::Sender<RawFileEvent>,
+    dos_devices: Arc<parking_lot::Mutex<HashMap<String, String>>>,
+) -> Result<KernelTrace> {
+    // Only enable the FILE_IO provider. The FILE_IO_INIT provider
+    // generates ~10x more events (every open/cleanup/close) and was
+    // observed to exhaust the kernel ETW nonpaged pool, returning
+    // ERROR_NO_SYSTEM_RESOURCES. We only need the Write events for the
+    // disk-usage tracker; create/close metadata is not used downstream.
+    let provider = build_fileio_provider(raw_tx, dos_devices);
 
     let trace = KernelTrace::new()
-        .named("DiskSpy-KernelTrace".to_string())
+        .named(name.to_string())
         .enable(provider)
-        .enable(init_provider)
         .start_and_process()
         .map_err(|e| anyhow!("failed to start ETW kernel trace: {:?}", e))?;
 
-    info!("ETW kernel trace session started: DiskSpy-KernelTrace");
+    info!(session = %name, "ETW kernel trace session started");
     Ok(trace)
+}
+
+/// Build a session name that is unique per process. The format is
+/// `DiskSpy-KernelTrace-pid-<rand>` where `<rand>` is 8 hex chars from the
+/// process ID mixed with nanoseconds. This avoids two concurrent runs of
+/// DiskSpy (or a stale session from a hard-killed previous run) colliding on
+/// the same global session name.
+fn unique_session_name() -> String {
+    let pid = std::process::id();
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.subsec_nanos())
+        .unwrap_or(0);
+    let suffix = format!("{:x}-{:x}", pid, nanos);
+    // Trim to a 64-char cap; ETW names truncate past that anyway.
+    let mut name = format!("DiskSpy-KernelTrace-{}", suffix);
+    if name.len() > 64 {
+        name.truncate(64);
+    }
+    name
 }
 
 /// Check whether the current process is running elevated (Administrator).
@@ -256,15 +297,17 @@ pub fn elevation_error_message() -> &'static str {
 }
 
 /// Blocking ETW consumer entry point. Spawn this on a dedicated thread.
-/// It returns when the trace session ends.
+/// It returns when the trace session ends (i.e. when the `KernelTrace` is
+/// dropped on shutdown).
 pub fn run_etw_consumer(
     raw_tx: mpsc::Sender<RawFileEvent>,
     dos_devices: Arc<parking_lot::Mutex<HashMap<String, String>>>,
 ) -> Result<()> {
     let trace = start_trace(raw_tx, dos_devices)?;
-    // The trace handle's process() is already running on its own thread (via
-    // start_and_process). We just need to keep the KernelTrace alive here.
-    // Drop happens on shutdown when main calls abort on the channel.
+    // The trace handle's process() is already running on its own thread
+    // (via start_and_process). We just need to keep the KernelTrace alive
+    // here so the session stays attached. When this scope is dropped, the
+    // KernelTrace's Drop runs and stops the session cleanly.
     std::thread::park_timeout(Duration::from_secs(u64::MAX / 4));
     drop(trace);
     Ok(())
